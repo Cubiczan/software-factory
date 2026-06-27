@@ -1,0 +1,33 @@
+---
+apiVersion: v1
+kind: Console
+metadata:
+  name: Software Factory Console
+spec:
+  layout:
+    - h: 4
+      i: factory-runs
+      minH: 2
+      minW: 4
+      w: 12
+      x: 0
+      "y": 0
+  panels:
+    - id: factory-runs
+      type: table
+      content:
+        dataSource:
+          kind: memory
+          namespace: softwareFactoryRuns
+        render:
+          kind: table
+          title: Factory runs
+          columns:
+            - field: branch
+              label: Branch
+            - field: prNumber
+              label: PR
+            - field: status
+              label: Status
+            - field: updatedAt
+              label: Updated

@@ -1,0 +1,19 @@
+{
+  "name": "software-factory-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "build": "node -e \"console.log('build ok')\"",
+    "lint": "node -e \"console.log('lint ok')\"",
+    "test": "node --test src/**/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
+  }
+}

@@ -1,0 +1,17 @@
+# Template: add to a fork of superplanehq/superplane for factory PoC previews on Render.
+# Adjust rootDir / buildCommand to match the SuperPlane web app path in the monorepo.
+#
+# Enable Manual PR previews in Render Dashboard after deploying this Blueprint.
+
+services:
+  - type: web
+    name: superplane-poc
+    runtime: docker
+    region: oregon
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true

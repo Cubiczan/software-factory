@@ -1,0 +1,114 @@
+name: TITO MAESTRO Threat Model
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TITO scan with MAESTRO
+        id: tito
+        uses: Leathal1/TITO@v2
+        with:
+          maestro: true
+          mitre: true
+          attack-paths: true
+          sarif-output: true
+          fail-on: critical
+
+      - name: Publish TITO commit status
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const critical = Number('${{ steps.tito.outputs.threats-critical }}' || 0);
+            const high = Number('${{ steps.tito.outputs.threats-high }}' || 0);
+            const total = Number('${{ steps.tito.outputs.threats-total }}' || 0);
+            const state = critical > 0 ? 'failure' : 'success';
+            const description = critical > 0
+              ? `${critical} critical MAESTRO threats — merge blocked`
+              : `MAESTRO scan OK (${total} threats, ${high} high)`;
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state,
+              target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description,
+              context: 'TITO Threat Model',
+            });
+
+      - name: Comment threat summary on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = '${{ steps.tito.outputs.threats-total }}';
+            const critical = '${{ steps.tito.outputs.threats-critical }}';
+            const high = '${{ steps.tito.outputs.threats-high }}';
+            const medium = '${{ steps.tito.outputs.threats-medium }}';
+            const badge = '${{ steps.tito.outputs.badge-url }}';
+
+            const body = [
+              '## TITO MAESTRO Threat Model',
+              '',
+              badge ? `![TITO](${badge})` : '',
+              '',
+              '| Severity | Count |',
+              '|----------|-------|',
+              `| Critical | ${critical} |`,
+              `| High | ${high} |`,
+              `| Medium | ${medium} |`,
+              `| **Total** | **${total}** |`,
+              '',
+              'MAESTRO layers 1–3 analyzed for agentic AI attack paths.',
+              'Critical findings block merge.',
+            ].filter(Boolean).join('\n');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Upload threat model artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threat-model
+          path: |
+            threat-model.html
+            *.sarif
+          if-no-files-found: ignore
+
+  threat-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TITO PR threat diff
+        uses: Leathal1/TITO@v2
+        with:
+          diff-base: ${{ github.event.pull_request.base.sha }}
+          diff-head: ${{ github.event.pull_request.head.sha }}
+          maestro: true
+          mitre: true
+          fail-on: high

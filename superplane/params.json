@@ -1,0 +1,15 @@
+{
+  "target_repository": "icohangar-ops/superplane",
+  "upstream_repository": "superplanehq/superplane",
+  "fork_owner": "icohangar-ops",
+  "base_branch": "main",
+  "github_integration_id": "3bfab1be-6625-4e3f-8a93-0948c241ab87",
+  "openai_integration_id": "ee24e666-0e30-4a0f-933c-971991739aaa",
+  "daytona_integration_id": "f2e94cf8-1530-4ad2-8913-3954467ab5ba",
+  "render_integration_id": "682b07fb-a298-40c6-895e-7a3119ad1edb",
+  "render_service_id": "",
+  "render_service_name": "software-factory",
+  "openai_model": "deepseek-chat",
+  "preview_port": "3000",
+  "tito_status_context": "TITO Threat Model"
+}

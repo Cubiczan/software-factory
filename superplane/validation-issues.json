@@ -1,0 +1,27 @@
+[
+  {
+    "number": 5368,
+    "title": "Markdown view mode (mermaid.js, node mention chips)",
+    "summary": "Render markdown files in view mode with mermaid diagrams and node mention chips"
+  },
+  {
+    "number": 5366,
+    "title": "Canvas version diff highlighting",
+    "summary": "Highlight canvas changes between versions in the diff view"
+  },
+  {
+    "number": 5164,
+    "title": "Send execution to agent chat",
+    "summary": "Allow sending a workflow execution context into agent chat"
+  },
+  {
+    "number": 5704,
+    "title": "Run inspection UX paper cuts",
+    "summary": "Polish run inspection UX details and small interaction fixes"
+  },
+  {
+    "number": 5705,
+    "title": "Canvas warnings improvements",
+    "summary": "Improve canvas warning messages and surfacing"
+  }
+]

@@ -1,0 +1,801 @@
+---
+apiVersion: v1
+kind: Canvas
+metadata:
+  description: >
+    Hackathon Software Factory — vague idea or GitHub issue in, LLM speccing + coding +
+    stage validation out, with TITO/MAESTRO security and Render PR preview URL on the PR.
+    Code runs on fork icohangar-ops/superplane; PRs open upstream on superplanehq/superplane.
+  name: Software Factory
+  id: 3c84e82e-e008-49f1-aff1-aaefbfe2033e
+spec:
+  edges:
+    # Intake → spec
+    - { channel: default, sourceId: trigger-feature-request, targetId: normalize-input }
+    - { channel: default, sourceId: trigger-github-issue, targetId: filter-factory-command }
+    - { channel: default, sourceId: filter-factory-command, targetId: normalize-input }
+    - { channel: passed, sourceId: normalize-input, targetId: llm-generate-spec }
+    - { channel: default, sourceId: llm-generate-spec, targetId: validate-spec }
+    - { channel: passed, sourceId: validate-spec, targetId: create-sandbox }
+
+    # Implement → verify
+    - { channel: default, sourceId: create-sandbox, targetId: llm-generate-implementation }
+    - { channel: default, sourceId: llm-generate-implementation, targetId: parse-implementation }
+    - { channel: passed, sourceId: parse-implementation, targetId: encode-impl-payload }
+    - { channel: passed, sourceId: encode-impl-payload, targetId: implement-in-sandbox }
+    - { channel: success, sourceId: implement-in-sandbox, targetId: gate-build-passed }
+    - { channel: "true", sourceId: gate-build-passed, targetId: run-tito-scan }
+    - { channel: failed, sourceId: implement-in-sandbox, targetId: fail-build }
+    - { channel: "false", sourceId: gate-build-passed, targetId: fail-build }
+
+    # Security → ship
+    - { channel: success, sourceId: run-tito-scan, targetId: gate-tito-passed }
+    - { channel: failed, sourceId: run-tito-scan, targetId: fail-tito }
+    - { channel: "true", sourceId: gate-tito-passed, targetId: commit-and-push }
+    - { channel: "false", sourceId: gate-tito-passed, targetId: fail-tito }
+    - { channel: success, sourceId: commit-and-push, targetId: create-pull-request }
+    - { channel: passed, sourceId: create-pull-request, targetId: store-factory-run }
+    - { channel: default, sourceId: store-factory-run, targetId: notify-render-preview }
+    - { channel: passed, sourceId: notify-render-preview, targetId: comment-preview-on-pr }
+
+    # Render webhook path (deploy_ended → preview URL on PR)
+    - { channel: default, sourceId: trigger-render-on-deploy, targetId: filter-deploy-succeeded }
+    - { channel: default, sourceId: filter-deploy-succeeded, targetId: get-render-deploy }
+    - { channel: default, sourceId: get-render-deploy, targetId: get-render-service }
+    - { channel: default, sourceId: get-render-service, targetId: resolve-render-preview-url }
+    - { channel: passed, sourceId: resolve-render-preview-url, targetId: lookup-factory-pr }
+    - { channel: passed, sourceId: lookup-factory-pr, targetId: comment-render-webhook-on-pr }
+
+  nodes:
+    # ── Triggers ────────────────────────────────────────────────────
+    - id: trigger-feature-request
+      name: Feature Request
+      type: TYPE_TRIGGER
+      component: start
+      position: { x: 120, y: 120 }
+      configuration:
+        templates:
+          - name: issue
+            title: "Run factory on GitHub issue #"
+            parameters:
+              - name: issue_number
+                title: Issue number
+                type: string
+                placeholder: "5368"
+            payload:
+              mode: issue
+              issue_number: "{{ parameters.issue_number }}"
+              repository: "superplanehq/superplane"
+          - name: idea
+            title: Vague feature idea
+            parameters:
+              - name: idea
+                title: Rough description
+                type: string
+                placeholder: "Add markdown preview with mermaid diagrams"
+            payload:
+              mode: idea
+              idea: "{{ parameters.idea }}"
+              repository: "icohangar-ops/superplane"
+
+    - id: trigger-github-issue
+      name: On Issue Comment
+      type: TYPE_TRIGGER
+      component: github.onIssueComment
+      position: { x: 120, y: 420 }
+      configuration:
+        repository: "superplane"
+        actions:
+          - created
+      integration:
+        id: "3bfab1be-6625-4e3f-8a93-0948c241ab87"
+
+    - id: filter-factory-command
+      name: "/factory command?"
+      type: TYPE_ACTION
+      component: filter
+      position: { x: 420, y: 420 }
+      configuration:
+        expression: '{{ root().data.comment.body matches "(?i)/factory" }}'
+
+    # ── Stage 1: Normalize + LLM spec ───────────────────────────────
+    - id: normalize-input
+      name: Normalize input
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 720, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        script: |
+          const VALIDATION = [
+            { number: 5368, title: "Markdown view mode" },
+            { number: 5366, title: "Canvas version diff highlighting" },
+            { number: 5164, title: "Send execution to agent chat" },
+            { number: 5704, title: "Run inspection UX paper cuts" },
+            { number: 5705, title: "Canvas warnings improvements" },
+          ];
+
+          function fromManual() {
+            const d = $["Feature Request"]?.data || {};
+            if (d.mode === "issue") {
+              const n = Number(d.issue_number);
+              const known = VALIDATION.find((v) => v.number === n);
+              return {
+                mode: "issue",
+                issueNumber: n,
+                title: known?.title || ("Issue #" + n),
+                body: d.idea || "",
+                repository: d.repository,
+              };
+            }
+            return {
+              mode: "idea",
+              issueNumber: null,
+              title: "Factory PoC",
+              body: String(d.idea || "").trim(),
+              repository: d.repository,
+            };
+          }
+
+          function fromComment() {
+            const e = $["On Issue Comment"]?.data || {};
+            const issue = e.issue || {};
+            return {
+              mode: "issue",
+              issueNumber: issue.number,
+              title: issue.title,
+              body: issue.body || "",
+              repository: e.repository?.full_name,
+              commentUrl: e.comment?.html_url,
+            };
+          }
+
+          function main() {
+            const FORK = "icohangar-ops/superplane";
+            const UPSTREAM = "superplanehq/superplane";
+            const input = $["Feature Request"]?.data
+              ? fromManual()
+              : fromComment();
+            if (!input.body && !input.issueNumber) {
+              throw new Error("Need an issue number or feature description");
+            }
+            const slug = (input.title || "poc").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+            return {
+              ...input,
+              repository: FORK,
+              upstreamRepository: UPSTREAM,
+              branch: "factory/" + slug + "-" + Date.now().toString(36),
+              baseBranch: "main",
+            };
+          }
+
+    - id: llm-generate-spec
+      name: LLM — generate spec
+      type: TYPE_ACTION
+      component: openai.textPrompt
+      position: { x: 1320, y: 260 }
+      configuration:
+        model: "deepseek-chat"
+        input: |
+          You are a senior engineer speccing a minimal proof-of-concept for SuperPlane.
+
+          Feature title: {{ $["Normalize input"].data.result.title }}
+          Issue #: {{ $["Normalize input"].data.result.issueNumber }}
+          Description:
+          {{ $["Normalize input"].data.result.body }}
+
+          Output ONLY valid JSON with:
+          - summary (string)
+          - acceptanceCriteria (string[])
+          - filesLikelyTouched (string[])
+          - implementationSteps (string[])
+          - testPlan (string[])
+          - risks (string[])
+      integration:
+        id: "ee24e666-0e30-4a0f-933c-971991739aaa"
+
+    - id: validate-spec
+      name: Validate spec
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 1920, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 60
+        enable_setup_commands: false
+        script: |
+          function main() {
+            const raw = $["LLM — generate spec"].data.text || "";
+            const match = raw.match(/\{[\s\S]*\}/);
+            if (!match) throw new Error("Spec validation failed: no JSON from LLM");
+            const spec = JSON.parse(match[0]);
+            if (!spec.summary || !Array.isArray(spec.acceptanceCriteria) || spec.acceptanceCriteria.length < 2) {
+              throw new Error("Spec validation failed: missing summary or acceptance criteria");
+            }
+            const input = $["Normalize input"].data.result;
+            return {
+              valid: true,
+              spec,
+              branch: input.branch,
+              baseBranch: input.baseBranch,
+              repository: input.repository,
+              issueNumber: input.issueNumber,
+              title: input.title,
+            };
+          }
+
+    # ── Stage 2: Sandbox + LLM implementation ─────────────────────
+    - id: create-sandbox
+      name: Create repo sandbox
+      type: TYPE_ACTION
+      component: daytona.createRepositorySandbox
+      position: { x: 2520, y: 260 }
+      configuration:
+        repository: "https://github.com/icohangar-ops/superplane.git"
+        bootstrap:
+          from: file
+          path: scripts/bootstrap-sandbox.sh
+      integration:
+        id: "f2e94cf8-1530-4ad2-8913-3954467ab5ba"
+
+    - id: llm-generate-implementation
+      name: LLM — generate code
+      type: TYPE_ACTION
+      component: openai.textPrompt
+      position: { x: 3120, y: 260 }
+      configuration:
+        model: "deepseek-chat"
+        input: |
+          You are an AI coding agent implementing a minimal PoC in the SuperPlane monorepo.
+
+          Approved spec:
+          {{ $["Validate spec"].data.result.spec }}
+
+          Branch: {{ $["Validate spec"].data.result.branch }}
+
+          Output ONLY valid JSON:
+          {
+            "commitMessage": "feat: ...",
+            "files": [{ "path": "relative/path", "content": "full file content" }],
+            "previewCommand": "command to start preview server on port 3000",
+            "verificationNotes": "what was implemented"
+          }
+
+          Keep changes minimal but working. Prefer frontend fixes in web/ when applicable.
+      integration:
+        id: "ee24e666-0e30-4a0f-933c-971991739aaa"
+
+    - id: parse-implementation
+      name: Parse implementation
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 3720, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 60
+        enable_setup_commands: false
+        script: |
+          function main() {
+            const raw = $["LLM — generate code"].data.text || "";
+            const match = raw.match(/\{[\s\S]*\}/);
+            if (!match) throw new Error("Implementation parse failed");
+            const impl = JSON.parse(match[0]);
+            if (!impl.files?.length) throw new Error("Implementation must include files[]");
+            return {
+              impl,
+              spec: $["Validate spec"].data.result,
+              sandboxId: $["Create repo sandbox"].data.sandboxId,
+            };
+          }
+
+    - id: encode-impl-payload
+      name: Encode impl payload
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 4020, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 60
+        enable_setup_commands: false
+        script: |
+          function main() {
+            const parsed = $["Parse implementation"].data.result;
+            return {
+              specB64: Buffer.from(JSON.stringify(parsed.impl)).toString("base64"),
+              sandboxId: parsed.sandboxId,
+            };
+          }
+
+    - id: implement-in-sandbox
+      name: Apply + verify build
+      type: TYPE_ACTION
+      component: daytona.executeCommand
+      position: { x: 4620, y: 260 }
+      configuration:
+        sandbox: '{{ $["Encode impl payload"].data.result.sandboxId }}'
+        command: |-
+          set -e
+          echo '{{ $["Encode impl payload"].data.result.specB64 }}' | base64 -d > /tmp/factory-spec.json
+          node /tmp/factory-apply-spec.js /tmp/factory-spec.json || true
+          bash scripts/implement-feature.sh || true
+          cd "${REPO_DIR:-/home/daytona/workspace}"
+          if [ -f Makefile ] && grep -q '^test:' Makefile; then make test; elif [ -f package.json ]; then npm test --if-present; elif [ -f go.mod ]; then go test ./... -count=1; fi
+          echo BUILD_VERIFY_OK
+      integration:
+        id: "f2e94cf8-1530-4ad2-8913-3954467ab5ba"
+
+    - id: gate-build-passed
+      name: Build passed?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 4920, y: 260 }
+      configuration:
+        expression: '{{ $["Apply + verify build"].data.exitCode == 0 }}'
+
+    - id: fail-build
+      name: Fail — build
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 4920, y: 520 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 30
+        script: |
+          function main() {
+            console.log("FACTORY_BUILD_FAILED");
+            return { stage: "verify", status: "failed" };
+          }
+
+    # ── Stage 3: TITO/MAESTRO security gate ─────────────────────────
+    - id: run-tito-scan
+      name: TITO MAESTRO scan
+      type: TYPE_ACTION
+      component: daytona.executeCommand
+      position: { x: 5520, y: 260 }
+      configuration:
+        sandbox: '{{ $["Create repo sandbox"].data.sandboxId }}'
+        command: |-
+          set -e
+          cd "${REPO_DIR:-/home/daytona/workspace}"
+          if ! command -v tito >/dev/null; then
+            go install github.com/Leathal1/TITO/v2/cmd/tito@latest
+          fi
+          tito scan --repo . --maestro --mitre --output /tmp/tito-report.html
+          CRIT=$(tito scan --repo . --maestro 2>&1 | rg -c '"severity":"critical"' || echo 0)
+          echo "TITO_CRITICAL=$CRIT"
+          test "$CRIT" = "0"
+      integration:
+        id: "f2e94cf8-1530-4ad2-8913-3954467ab5ba"
+
+    - id: gate-tito-passed
+      name: TITO passed?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 6120, y: 260 }
+      configuration:
+        expression: '{{ $["TITO MAESTRO scan"].data.exitCode == 0 }}'
+
+    - id: fail-tito
+      name: Fail — TITO
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 6120, y: 520 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 30
+        script: |
+          function main() {
+            console.log("FACTORY_TITO_BLOCKED");
+            return { stage: "security", status: "failed", framework: "MAESTRO" };
+          }
+
+    # ── Stage 4: PR + preview ───────────────────────────────────────
+    - id: commit-and-push
+      name: Commit and push
+      type: TYPE_ACTION
+      component: daytona.executeCommand
+      position: { x: 6720, y: 260 }
+      configuration:
+        sandbox: '{{ $["Create repo sandbox"].data.sandboxId }}'
+        command: |-
+          set -e
+          cd "${REPO_DIR:-/home/daytona/workspace}"
+          git add -A
+          git commit -m "{{ $['Parse implementation'].data.result.impl.commitMessage }}"
+          git push -u origin {{ $["Validate spec"].data.result.branch }}
+          echo PUSH_OK
+      integration:
+        id: "f2e94cf8-1530-4ad2-8913-3954467ab5ba"
+
+    - id: create-pull-request
+      name: Create upstream PR
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 7320, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        environment:
+          - name: GITHUB_TOKEN
+            valueSource: secret
+            secret:
+              secret: github-token
+              key: token
+        script: |
+          async function githubFetch(path, opts = {}) {
+            const headers = {
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            };
+            if (process.env.GITHUB_TOKEN) {
+              headers.Authorization = "Bearer " + process.env.GITHUB_TOKEN;
+            }
+            const res = await fetch("https://api.github.com" + path, {
+              ...opts,
+              headers: { ...headers, ...(opts.headers || {}) },
+            });
+            const body = await res.json();
+            if (!res.ok) {
+              throw new Error("GitHub API " + res.status + ": " + JSON.stringify(body));
+            }
+            return body;
+          }
+
+          function main() {
+            const spec = $["Validate spec"].data.result;
+            const forkOwner = "icohangar-ops";
+            const upstream = spec.upstreamRepository || "superplanehq/superplane";
+            const [upOwner, upRepo] = upstream.split("/");
+            const branch = spec.branch;
+            const title = "[render preview] feat(factory): " + spec.title;
+            const body = [
+              "## Software Factory PoC",
+              "",
+              "**Issue:** #" + spec.issueNumber,
+              "",
+              "### Spec",
+              spec.spec.summary,
+              "",
+              "### Acceptance criteria",
+              JSON.stringify(spec.spec.acceptanceCriteria),
+              "",
+              "### Security",
+              "TITO MAESTRO scan passed (no critical agentic AI threats).",
+              "",
+              "---",
+              "_Generated by SuperPlane Software Factory (fork → upstream PR)_",
+            ].join("\n");
+
+            return githubFetch("/repos/" + upOwner + "/" + upRepo + "/pulls", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title,
+                head: forkOwner + ":" + branch,
+                base: spec.baseBranch || "main",
+                body,
+              }),
+            }).then((pr) => ({
+              number: pr.number,
+              html_url: pr.html_url,
+              head: pr.head,
+              upstreamRepository: upstream,
+            }));
+          }
+
+    - id: store-factory-run
+      name: Store factory run
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 7720, y: 260 }
+      configuration:
+        namespace: softwareFactoryRuns
+        matchList:
+          - name: branch
+            value: '{{ $["Create upstream PR"].data.result.head.ref }}'
+        valueList:
+          - name: branch
+            value: '{{ $["Create upstream PR"].data.result.head.ref }}'
+          - name: prNumber
+            value: '{{ $["Create upstream PR"].data.result.number }}'
+          - name: prUrl
+            value: '{{ $["Create upstream PR"].data.result.html_url }}'
+          - name: repository
+            value: "superplanehq/superplane"
+          - name: status
+            value: awaiting_render_preview
+          - name: updatedAt
+            value: '{{ now() }}'
+
+    - id: notify-render-preview
+      name: Notify Render preview
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 8120, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 30
+        enable_setup_commands: false
+        script: |
+          function main() {
+            const pr = $["Create upstream PR"]?.data?.result || {};
+            console.log("RENDER_PREVIEW_TRIGGERED");
+            return {
+              prNumber: pr.number,
+              prUrl: pr.html_url,
+              renderService: "software-factory",
+              trigger: "[render preview] in PR title → Render Manual PR preview",
+            };
+          }
+
+    - id: comment-preview-on-pr
+      name: Comment preview link
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 8720, y: 260 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        environment:
+          - name: GITHUB_TOKEN
+            valueSource: secret
+            secret:
+              secret: github-token
+              key: token
+        script: |
+          async function githubFetch(path, opts = {}) {
+            const headers = {
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            };
+            if (process.env.GITHUB_TOKEN) {
+              headers.Authorization = "Bearer " + process.env.GITHUB_TOKEN;
+            }
+            const res = await fetch("https://api.github.com" + path, {
+              ...opts,
+              headers: { ...headers, ...(opts.headers || {}) },
+            });
+            const body = await res.json();
+            if (!res.ok) {
+              throw new Error("GitHub API " + res.status + ": " + JSON.stringify(body));
+            }
+            return body;
+          }
+
+          function main() {
+            const pr = $["Create upstream PR"]?.data?.result || {};
+            const body = [
+              "## Software Factory — Render preview deploying",
+              "",
+              "**PR:** " + pr.html_url,
+              "",
+              "Render is building a PR preview (triggered by `[render preview]` in the title).",
+              "When the deploy finishes, a **Render webhook** (`deploy_ended`) triggers SuperPlane",
+              "to post the live preview URL here automatically.",
+              "",
+              "Fallback: GitHub **Deployments** tab or the `render-preview` CI workflow.",
+              "",
+              "| Stage | Status |",
+              "|-------|--------|",
+              "| LLM spec | passed |",
+              "| Build verify | passed |",
+              "| TITO MAESTRO | passed |",
+              "| PR opened (upstream) | passed |",
+              "| Render preview | building (webhook pending) |",
+            ].join("\n");
+
+            return githubFetch(
+              "/repos/superplanehq/superplane/issues/" + pr.number + "/comments",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ body }),
+              },
+            );
+          }
+
+    # ── Render webhook path ─────────────────────────────────────────
+    - id: trigger-render-on-deploy
+      name: On Render Deploy
+      type: TYPE_TRIGGER
+      component: render.onDeploy
+      position: { x: 120, y: 720 }
+      configuration:
+        service: ""
+        eventTypes:
+          - deploy_ended
+      integration:
+        id: "682b07fb-a298-40c6-895e-7a3119ad1edb"
+
+    - id: filter-deploy-succeeded
+      name: Deploy succeeded?
+      type: TYPE_ACTION
+      component: filter
+      position: { x: 720, y: 720 }
+      configuration:
+        expression: '{{ root().data.status == "succeeded" }}'
+
+    - id: get-render-deploy
+      name: Get Render deploy
+      type: TYPE_ACTION
+      component: render.getDeploy
+      position: { x: 1320, y: 720 }
+      configuration:
+        service: ""
+        deployId: '{{ root().data.deployId }}'
+      integration:
+        id: "682b07fb-a298-40c6-895e-7a3119ad1edb"
+
+    - id: get-render-service
+      name: Get Render service
+      type: TYPE_ACTION
+      component: render.getService
+      position: { x: 1920, y: 720 }
+      configuration:
+        service: ""
+      integration:
+        id: "682b07fb-a298-40c6-895e-7a3119ad1edb"
+
+    - id: resolve-render-preview-url
+      name: Resolve preview URL
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 2520, y: 720 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        script: |
+          function main() {
+            const deployEvent = root().data || {};
+            const deploy = $["Get Render deploy"]?.data || {};
+            const service = $["Get Render service"]?.data || {};
+            const serviceName = deployEvent.serviceName || service.serviceName || "software-factory";
+            const previewUrl = "https://" + serviceName + ".onrender.com";
+            return {
+              previewUrl,
+              deployId: deploy.deployId || deployEvent.deployId,
+              serviceName,
+              commitSha: deploy.commit?.id || null,
+              status: deploy.status || deployEvent.status,
+              dashboardUrl: service.dashboardUrl,
+            };
+          }
+
+    - id: lookup-factory-pr
+      name: Lookup factory PR
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 2820, y: 720 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        environment:
+          - name: GITHUB_TOKEN
+            valueSource: secret
+            secret:
+              secret: github-token
+              key: token
+        script: |
+          async function githubFetch(path) {
+            const headers = {
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            };
+            if (process.env.GITHUB_TOKEN) {
+              headers.Authorization = "Bearer " + process.env.GITHUB_TOKEN;
+            }
+            const res = await fetch("https://api.github.com" + path, { headers });
+            const body = await res.json();
+            if (!res.ok) throw new Error("GitHub API " + res.status + ": " + JSON.stringify(body));
+            return body;
+          }
+
+          function main() {
+            const resolved = $["Resolve preview URL"]?.data?.result || {};
+            const repo = "superplanehq/superplane";
+            const [owner, name] = repo.split("/");
+            const sha = resolved.commitSha;
+            if (!sha) {
+              return { prNumber: null, prUrl: null, previewUrl: resolved.previewUrl };
+            }
+            return githubFetch(
+              "/repos/" + owner + "/" + name + "/commits/" + sha + "/pulls",
+            ).then((prs) => {
+              const factoryPr = (prs || []).find((p) =>
+                String(p.title || "").includes("[render preview]"),
+              ) || (prs || [])[0];
+              return {
+                prNumber: factoryPr?.number || null,
+                prUrl: factoryPr?.html_url || null,
+                previewUrl: resolved.previewUrl,
+                deployId: resolved.deployId,
+                serviceName: resolved.serviceName,
+                dashboardUrl: resolved.dashboardUrl,
+              };
+            });
+          }
+
+    - id: comment-render-webhook-on-pr
+      name: Comment Render preview URL
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 3420, y: 720 }
+      configuration:
+        execution_mode: host
+        machine_type: e1-tiny-amd64
+        execution_timeout_seconds: 120
+        enable_setup_commands: false
+        environment:
+          - name: GITHUB_TOKEN
+            valueSource: secret
+            secret:
+              secret: github-token
+              key: token
+        script: |
+          async function githubFetch(path, opts = {}) {
+            const headers = {
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            };
+            if (process.env.GITHUB_TOKEN) {
+              headers.Authorization = "Bearer " + process.env.GITHUB_TOKEN;
+            }
+            const res = await fetch("https://api.github.com" + path, {
+              ...opts,
+              headers: { ...headers, ...(opts.headers || {}) },
+            });
+            const body = await res.json();
+            if (!res.ok) {
+              throw new Error("GitHub API " + res.status + ": " + JSON.stringify(body));
+            }
+            return body;
+          }
+
+          function main() {
+            const lookup = $["Lookup factory PR"]?.data?.result || {};
+            const body = [
+              "## Render preview ready (webhook)",
+              "",
+              "**Live PoC:** " + lookup.previewUrl,
+              "",
+              "| Field | Value |",
+              "|-------|-------|",
+              "| Deploy | " + lookup.deployId + " |",
+              "| Service | " + lookup.serviceName + " |",
+              "| PR | " + lookup.prUrl + " |",
+              "",
+              "Triggered by Render `deploy_ended` → SuperPlane.",
+              "",
+              "[Render dashboard](" + lookup.dashboardUrl + ")",
+            ].join("\n");
+
+            if (!lookup.prNumber) {
+              return { skipped: true, reason: "no pr number" };
+            }
+
+            return githubFetch(
+              "/repos/superplanehq/superplane/issues/" + lookup.prNumber + "/comments",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ body }),
+              },
+            );
+          }

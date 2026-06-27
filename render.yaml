@@ -1,0 +1,28 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Budget tips ($50 credit):
+# - Enable Manual PR previews in Dashboard → service → Previews tab
+# - Factory PRs use [render preview] in the title to spin previews on demand
+# - Previews bill at starter rate, prorated by the second; deleted when PR closes
+#
+# Setup: https://dashboard.render.com/ → New → Blueprint → connect this repo
+
+services:
+  - type: web
+    name: software-factory
+    runtime: node
+    region: oregon
+    plan: starter
+  # Do not pin branch — PR previews deploy the PR branch automatically
+    rootDir: app
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FACTORY_NAME
+        value: SuperPlane Software Factory
+      - key: PORT
+        value: "10000"
+    autoDeploy: true
