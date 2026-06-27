@@ -7,7 +7,7 @@
   "openai_integration_id": "ee24e666-0e30-4a0f-933c-971991739aaa",
   "daytona_integration_id": "f2e94cf8-1530-4ad2-8913-3954467ab5ba",
   "render_integration_id": "682b07fb-a298-40c6-895e-7a3119ad1edb",
-  "render_service_id": "srv-d90013v7f7vs739lbhi0",
+  "render_service_id": "srv-d900ofn7f7vs739m6teg",
   "render_service_name": "software-factory",
   "openai_model": "deepseek-chat",
   "preview_port": "3000",
