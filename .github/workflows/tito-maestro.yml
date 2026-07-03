@@ -21,12 +21,12 @@ jobs:
 
       - name: TITO scan with MAESTRO
         id: tito
-        uses: Leathal1/TITO@v2
+        uses: Leathal1/TITO@v2.3.1
         with:
           maestro: true
           mitre: true
           attack-paths: true
-          sarif-output: true
+          sarif-upload: true
           fail-on: critical
 
       - name: Publish TITO commit status
@@ -105,7 +105,7 @@ jobs:
           fetch-depth: 0
 
       - name: TITO PR threat diff
-        uses: Leathal1/TITO@v2
+        uses: Leathal1/TITO@v2.3.1
         with:
           diff-base: ${{ github.event.pull_request.base.sha }}
           diff-head: ${{ github.event.pull_request.head.sha }}
