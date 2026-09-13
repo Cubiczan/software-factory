@@ -15,13 +15,13 @@ jobs:
   threat-model:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: TITO scan with MAESTRO
         id: tito
-        uses: Leathal1/TITO@v2.3.1
+        uses: Leathal1/TITO@19bb11b20bd9b616309701ea058ac9a7a99b5245 # v2.3.1
         with:
           maestro: true
           mitre: true
@@ -31,7 +31,7 @@ jobs:
 
       - name: Publish TITO commit status
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const critical = Number('${{ steps.tito.outputs.threats-critical }}' || 0);
@@ -54,7 +54,7 @@ jobs:
 
       - name: Comment threat summary on PR
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const total = '${{ steps.tito.outputs.threats-total }}';
@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload threat model artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: threat-model
           path: |
@@ -100,12 +100,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: TITO PR threat diff
-        uses: Leathal1/TITO@v2.3.1
+        uses: Leathal1/TITO@19bb11b20bd9b616309701ea058ac9a7a99b5245 # v2.3.1
         with:
           diff-base: ${{ github.event.pull_request.base.sha }}
           diff-head: ${{ github.event.pull_request.head.sha }}
